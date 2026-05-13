@@ -45,18 +45,48 @@ print(f"Total de linhas após a limpeza: {len(df)}")
 df['overview'] = df['overview'].fillna('No description available')
 
 # --- 3. VETORIZAÇÃO (MODELO AFIADO EM INGLÊS) ---
-print("Iniciando o modelo all-MiniLM-L6-v2 (O mais preciso)...")
+print("Criando 'sopa de dados' para a IA (Título + Sinopse + Keywords + Tagline)...")
+
+# Combinamos as colunas em uma única frase de contexto
+# O .astype(str) garante que tudo seja lido como texto
+df['contexto_completo'] = (
+    "Title: " + df['title'].astype(str) + ". " +
+    "Description: " + df['overview'].fillna('') + ". " +
+    "Keywords: " + df['keywords'].fillna('') + ". " +
+    "Tagline: " + df['tagline'].fillna('')
+)
+
+print("Iniciando o modelo all-MiniLM-L6-v2...")
 modelo = SentenceTransformer('all-MiniLM-L6-v2')
 
-print("Gerando vetores... Isso será rápido.")
-vetores = modelo.encode(df['overview'].tolist(), show_progress_bar=True)
+print("Gerando vetores de alta precisão... Isso pode demorar um pouco mais agora.")
+# Agora a IA lê a coluna combinada!
+vetores = modelo.encode(df['contexto_completo'].tolist(), show_progress_bar=True)
+
+# Transforma os vetores em string para o formato do pgvector
 df['embedding'] = [f"[{','.join(map(str, v))}]" for v in vetores]
 
 # --- 4. ENVIO PARA O BANCO ---
 print("Enviando dados limpos para o PostgreSQL...")
+
+# Definimos apenas as colunas que REALMENTE existem na tabela do banco
+# Note que NÃO incluímos 'contexto_completo' aqui, pois ela só serviu para a IA ler
+colunas_para_salvar = [
+    'id', 'title', 'genres', 'original_language', 'overview', 
+    'popularity', 'production_companies', 'release_date', 'budget', 
+    'revenue', 'runtime', 'status', 'tagline', 'vote_average', 
+    'vote_count', 'credits', 'keywords', 'poster_path', 
+    'backdrop_path', 'recommendations', 'embedding'
+]
+
 try:
-    # Lembre-se de dar TRUNCATE na tabela no pgAdmin antes de rodar!
-    df.to_sql('filmes', conexao, if_exists='append', index=False, dtype={'embedding': Text})
-    print(f"✅ SUCESSO! {len(df)} filmes únicos foram processados e salvos.")
+    # Filtramos o DataFrame para levar só o que o banco aceita
+    # O .intersection garante que só pegaremos colunas que existem no seu Excel
+    colunas_finais = [c for c in colunas_para_salvar if c in df.columns]
+    df_final = df[colunas_finais]
+    
+    # Lembre-se de dar TRUNCATE na tabela no pgAdmin antes!
+    df_final.to_sql('filmes', conexao, if_exists='append', index=False, dtype={'embedding': Text})
+    print(f"✅ SUCESSO! {len(df_final)} filmes processados com contexto completo.")
 except Exception as e:
     print(f"❌ Erro: {e}")
